@@ -1,129 +1,3 @@
-# Copyright 2021 The Magenta Authors.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""Onset-focused model for piano transcription."""
-
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
-import functools
-
-from magenta.common import flatten_maybe_padded_sequences
-from magenta.common import tf_utils
-from magenta.contrib import cudnn_rnn as contrib_cudnn_rnn
-from magenta.contrib import rnn as contrib_rnn
-from magenta.contrib import training as contrib_training
-from magenta.models.onsets_frames_transcription import constants
-from magenta.models.onsets_frames_transcription import infer_util
-from magenta.models.onsets_frames_transcription import metrics
-
-import tensorflow.compat.v1 as tf
-import tf_slim as slim
-
-
-def conv_net(inputs, hparams):
-  """Builds the ConvNet from Kelz 2016."""
-  with slim.arg_scope(
-      [slim.conv2d, slim.fully_connected],
-      activation_fn=tf.nn.relu,
-      weights_initializer=slim.variance_scaling_initializer(
-          factor=2.0, mode='FAN_AVG', uniform=True)):
-
-    net = inputs
-    i = 0
-    for (conv_temporal_size, conv_freq_size,
-         num_filters, freq_pool_size, dropout_amt) in zip(
-             hparams.temporal_sizes, hparams.freq_sizes, hparams.num_filters,
-             hparams.pool_sizes, hparams.dropout_keep_amts):
-      net = slim.conv2d(
-          net,
-          num_filters, [conv_temporal_size, conv_freq_size],
-          scope='conv' + str(i),
-          normalizer_fn=slim.batch_norm)
-      if freq_pool_size > 1:
-        net = slim.max_pool2d(
-            net, [1, freq_pool_size],
-            stride=[1, freq_pool_size],
-            scope='pool' + str(i))
-      if dropout_amt < 1:
-        net = slim.dropout(net, dropout_amt, scope='dropout' + str(i))
-      i += 1
-
-    # Flatten while preserving batch and time dimensions.
-    dims = tf.shape(net)
-    net = tf.reshape(
-        net, (dims[0], dims[1], net.shape[2] * net.shape[3]),
-        'flatten_end')
-
-    net = slim.fully_connected(net, hparams.fc_size, scope='fc_end')
-    net = slim.dropout(net, hparams.fc_dropout_keep_amt, scope='dropout_end')
-
-    return net
-
-
-def lstm_layer(inputs,
-               num_units,
-               lengths=None,
-               stack_size=1,
-               use_cudnn=False,
-               rnn_dropout_drop_amt=0,
-               bidirectional=True):
-  """Create a LSTM layer using the specified backend."""
-  if use_cudnn:
-    tf.logging.warning('cuDNN LSTM no longer supported. Using regular LSTM.')
-  if not bidirectional:
-    raise ValueError('Only bidirectional LSTMs are supported.')
-
-  assert rnn_dropout_drop_amt == 0
-  cells_fw = [
-      contrib_cudnn_rnn.CudnnCompatibleLSTMCell(num_units)
-      for _ in range(stack_size)
-  ]
-  cells_bw = [
-      contrib_cudnn_rnn.CudnnCompatibleLSTMCell(num_units)
-      for _ in range(stack_size)
-  ]
-  with tf.variable_scope('cudnn_lstm'):
-    (outputs, unused_state_f,
-     unused_state_b) = contrib_rnn.stack_bidirectional_dynamic_rnn(
-         cells_fw,
-         cells_bw,
-         inputs,
-         dtype=tf.float32,
-         sequence_length=lengths,
-         parallel_iterations=1)
-
-  return outputs
-
-
-def acoustic_model(inputs, hparams, lstm_units, lengths):
-  """Acoustic model that handles all specs for a sequence in one window."""
-  conv_output = conv_net(inputs, hparams)
-
-  if lstm_units:
-    return lstm_layer(
-        conv_output,
-        lstm_units,
-        lengths=lengths if hparams.use_lengths else None,
-        stack_size=hparams.acoustic_rnn_stack_size,
-        use_cudnn=hparams.use_cudnn,
-        bidirectional=hparams.bidirectional)
-
-  else:
-    return conv_output
-
 
 def model_fn(features, labels, mode, params, config):
     """Builds the acoustic model."""
@@ -251,6 +125,38 @@ def model_fn(features, labels, mode, params, config):
     offset_predictions = tf.expand_dims(offset_predictions, axis=0)
     velocity_values = tf.expand_dims(velocity_values_flat, axis=0)
 
+    def predict_sequence():
+        """Convert frame predictions into a sequence (TF)."""
+
+        def _predict(frame_probs, onset_probs, frame_predictions, onset_predictions,
+                     offset_predictions, velocity_values):
+            """Convert frame predictions into a sequence (Python)."""
+            sequence = infer_util.predict_sequence(
+                frame_probs=frame_probs,
+                onset_probs=onset_probs,
+                frame_predictions=frame_predictions,
+                onset_predictions=onset_predictions,
+                offset_predictions=offset_predictions,
+                velocity_values=velocity_values,
+                hparams=hparams,
+                min_pitch=constants.MIN_MIDI_PITCH)
+            return sequence.SerializeToString()
+
+        sequence = tf.py_func(
+            _predict,
+            inp=[
+                frame_probs[0],
+                onset_probs[0],
+                frame_predictions[0],
+                onset_predictions[0],
+                offset_predictions[0],
+                velocity_values[0],
+            ],
+            Tout=tf.string,
+            stateful=False)
+        sequence.set_shape([])
+        return tf.expand_dims(sequence, axis=0)
+
     predictions = {
         'frame_probs': frame_probs,
         'onset_probs': onset_probs,
@@ -258,7 +164,7 @@ def model_fn(features, labels, mode, params, config):
         'onset_predictions': onset_predictions,
         'offset_predictions': offset_predictions,
         'velocity_values': velocity_values,
-        # 'sequence_predictions': predict_sequence(),
+        'sequence_predictions': predict_sequence(),
         # Include some features and labels in output because Estimator 'predict'
         # API does not give access to them.
         # 'sequence_ids': features.sequence_id,  # shouldnt' need probably,
@@ -268,47 +174,3 @@ def model_fn(features, labels, mode, params, config):
     }
 
     return tf.estimator.EstimatorSpec(mode=mode, predictions=predictions)
-
-
-def get_default_hparams():
-  """Returns the default hyperparameters.
-
-  Returns:
-    A tf.contrib.training.HParams object representing the default
-    hyperparameters for the model.
-  """
-  return contrib_training.HParams(
-      batch_size=8,
-      learning_rate=0.0006,
-      decay_steps=10000,
-      decay_rate=0.98,
-      clip_norm=3.0,
-      transform_audio=True,
-      onset_lstm_units=256,
-      offset_lstm_units=256,
-      velocity_lstm_units=0,
-      frame_lstm_units=0,
-      combined_lstm_units=256,
-      acoustic_rnn_stack_size=1,
-      combined_rnn_stack_size=1,
-      activation_loss=False,
-      stop_activation_gradient=False,
-      stop_onset_gradient=True,
-      stop_offset_gradient=True,
-      weight_frame_and_activation_loss=False,
-      share_conv_features=False,
-      temporal_sizes=[3, 3, 3],
-      freq_sizes=[3, 3, 3],
-      num_filters=[48, 48, 96],
-      pool_sizes=[1, 2, 2],
-      dropout_keep_amts=[1.0, 0.75, 0.75],
-      fc_size=768,
-      fc_dropout_keep_amt=0.5,
-      use_lengths=False,
-      use_cudnn=False,  # DEPRECATED
-      rnn_dropout_drop_amt=0.0,
-      bidirectional=True,
-      predict_frame_threshold=0.5,
-      predict_onset_threshold=0.5,
-      predict_offset_threshold=0,
-  )

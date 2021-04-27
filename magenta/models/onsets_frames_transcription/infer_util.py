@@ -107,7 +107,7 @@ def predict_sequence(frame_probs,
         velocity_values=velocity_values,
         velocity_scale=hparams.velocity_scale,
         velocity_bias=hparams.velocity_bias)
-  else:
+  else:  # here
     if hparams.viterbi_decoding:
       pianoroll = probs_to_pianoroll_viterbi(
           frame_probs, onset_probs, alpha=hparams.viterbi_alpha)
@@ -123,7 +123,7 @@ def predict_sequence(frame_probs,
           velocity_values=velocity_values,
           velocity_scale=hparams.velocity_scale,
           velocity_bias=hparams.velocity_bias)
-    else:
+    else: # here
       sequence_prediction = sequences_lib.pianoroll_to_note_sequence(
           frames=frame_predictions,
           frames_per_second=data.hparams_frames_per_second(hparams),

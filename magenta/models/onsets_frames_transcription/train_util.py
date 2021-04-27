@@ -96,17 +96,29 @@ def create_estimator(model_fn,
 
   params = copy.deepcopy(hparams)
   params.del_hparam('batch_size')
-  return tf.estimator.tpu.TPUEstimator(
-      use_tpu=use_tpu,
-      model_fn=wrapped_model_fn,
-      model_dir=model_dir,
-      params=params,
-      train_batch_size=hparams.batch_size,
-      eval_batch_size=hparams.eval_batch_size,
-      predict_batch_size=hparams.predict_batch_size,
-      config=config,
-      warm_start_from=warm_start_from,
-      eval_on_tpu=False)
+  # return tf.estimator.tpu.TPUEstimator(
+  #     use_tpu=use_tpu,
+  #     model_fn=wrapped_model_fn,
+  #     model_dir=model_dir,
+  #     params=params,
+  #     train_batch_size=hparams.batch_size,
+  #     eval_batch_size=hparams.eval_batch_size,
+  #     predict_batch_size=hparams.predict_batch_size,
+  #     config=config,
+  #     warm_start_from=warm_start_from,
+  #     eval_on_tpu=False)
+
+  return tf.estimator.Estimator(
+    model_fn=wrapped_model_fn,
+    model_dir=model_dir,
+    params=params,
+    # train_batch_size=hparams.batch_size,
+    # eval_batch_size=hparams.eval_batch_size,
+    # predict_batch_size=hparams.predict_batch_size,
+    config=config,
+    warm_start_from=warm_start_from,
+    # eval_on_tpu=False
+  )
 
 
 def train(master,
