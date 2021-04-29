@@ -130,12 +130,8 @@ def model_fn(features, labels, mode, params, config):
     del config
     hparams = params
 
-    # length = features.length
-    # length = tf.placeholder(dtype=tf.int32, shape=[1, ], name="lmao")  # for now hard code to 1 length
-    length = tf.constant([1])  # arbitrary but whatever
-
     spec = features["feature"]  # should be a tensor containing all 229 bins
-    # spec = features.spec
+    length = spec.shape[1]
 
     if hparams.stop_activation_gradient and not hparams.activation_loss:
         raise ValueError('If stop_activation_gradient is true, activation_loss must be true.')

@@ -10,7 +10,9 @@ from magenta.models.onsets_frames_transcription import train_util
 from magenta.models.onsets_frames_transcription.configs import CONFIG_MAP
 
 CHECKPOINT_PATH = "models/piano_transcriber_checkpoint"
-CONFIG_KEY = "onsets_frames"  # "drums" for drums
+CONFIG_KEY = "onsets_frames"
+# CHECKPOINT_PATH = "models/drum_transcriber_checkpoint"
+# CONFIG_KEY = "drums"  # "drums" for drums
 
 config = CONFIG_MAP[CONFIG_KEY]
 hparams = config.hparams
@@ -20,39 +22,10 @@ hparams.truncated_length_secs = 0
 hparams.use_tpu = False
 
 
-# def _serving_input_receiver_fn():
-#     serialized_tf_example = tf.placeholder(dtype=tf.string, shape=[None])
-#     receiver_tensors = {'examples': serialized_tf_example}
-#
-#     dataset = provide_batch(
-#         examples=serialized_tf_example,
-#         preprocess_examples=True,
-#         params=hparams,
-#         is_training=False,
-#         shuffle_examples=False,
-#         skip_n_initial_records=0)
-#
-#     iterator = tf.data.make_initializable_iterator(dataset)
-#     feature_tensors, _ = iterator.get_next()
-#
-#     return tf.estimator.export.ServingInputReceiver(feature_tensors.spec, receiver_tensors)
-
 def _serving_input_receiver_fn():
-    tf_example = tf.placeholder(dtype=tf.float32, shape=[1, None, 229, 1])
-    # receiver_tensors = {'feat': tf_example}
+    # 229 for piano, 250 for drums I think
+    tf_example = tf.placeholder(dtype=tf.float32, shape=[1, None, hparams.spec_n_bins, 1])
     return tf.estimator.export.ServingInputReceiver(tf_example, tf_example)
-
-
-# def transcription_data(params):
-#     del params
-#     return _serving_input_receiver_fn()
-
-
-# new_serving_fn = labels_to_features_wrapper(transcription_data)
-
-#
-# def actual_fn():
-#     return new_serving_fn(hparams)
 
 
 if __name__ == "__main__":

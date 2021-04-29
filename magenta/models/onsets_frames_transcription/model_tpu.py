@@ -317,12 +317,10 @@ def model_fn(features, labels, mode, params, config):
   del config
   hparams = params
 
-  length = features.length
-  spec = features.spec
-  is_training = mode == tf.estimator.ModeKeys.TRAIN
+  spec = features["feature"]
+  length = spec.shape[1]
 
-  frame_logits, onset_logits, offset_logits, velocity_values = build_model(
-      spec, length, hparams, is_training)
+  frame_logits, onset_logits, offset_logits, velocity_values = build_model(spec, length, hparams, False)
 
   # Hack to restore the batch dimension, which is lost in some cases.
   def fix_shape(output):
@@ -333,7 +331,7 @@ def model_fn(features, labels, mode, params, config):
     fix_shape(output)
 
   return estimator_spec_util.get_estimator_spec(
-      hparams, mode, features, labels, frame_logits, onset_logits,
+      hparams, mode, length, labels, frame_logits, onset_logits,
       offset_logits, velocity_values, offset_network=hparams.offset_network)
 
 
